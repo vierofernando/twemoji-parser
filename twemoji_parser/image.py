@@ -173,8 +173,9 @@ class TwemojiParser:
                 _current_x += _size[0] + spacing
         
         if clear_cache_after_usage:
-            await self.close(delete_all_attributes=bool(kwargs.get("delete_all_attributes")))
-
+            self._emoji_cache = {}
+            self._image_cache = {}
+            gc.collect()
             
     async def close(self, delete_all_attributes: bool = True, close_session: bool = True):
         """ Closes the aiohttp ClientSession and clears all the cache. """
