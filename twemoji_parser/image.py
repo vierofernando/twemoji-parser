@@ -52,6 +52,9 @@ class TwemojiParser:
         return text.startswith("https://twemoji.maxcdn.com/v/latest/72x72/") or text.startswith("https://cdn.discordapp.com/emojis/")
 
 
+    __slots__ = ('_emoji_cache', '_image_cache', 'draw', 'image', 'emoji_size', 'parse_discord_emoji', '_discord_emoji_cache', '__session')
+    
+
     def __init__(self, image, parse_discord_emoji: bool = False, session: ClientSession = None, *args, **kwargs) -> None:
         """ Creates a parser from PIL.Image.Image object. """
         
@@ -201,6 +204,7 @@ class TwemojiParser:
             del self._image_cache
             del self.draw
             del self.image
+            del self.emoji_size
             del self.parse_discord_emoji
             del self._discord_emoji_cache
 
