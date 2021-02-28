@@ -8,14 +8,14 @@ from .discord_emoji import parse_custom_emoji
 import gc
 
 class TwemojiParser:
-    UNICODES = UNICODE_EMOJI.get('en', UNICODE_EMOJI).keys()
+    UNICODES = tuple(UNICODE_EMOJI.get('en', UNICODE_EMOJI).keys())
 
 
     @staticmethod
     def is_twemoji_url(text: str) -> bool:
         """ A static method that says if a url is a twemoji url """
 
-        return text.startswith("https://twemoji.maxcdn.com/v/latest/72x72/") and text.endswith(".png") and text.count(" ") == 0
+        return text.startswith("https://twemoji.maxcdn.com/v/latest/72x72/") and text.endswith(".png") and (" " not in text)
 
 
     @staticmethod
@@ -43,10 +43,13 @@ class TwemojiParser:
 
 
     def __is_emoji_url(self, text: str) -> bool:
-        if not self.parse_discord_emoji:
-            return text.startswith("https://twemoji.maxcdn.com/v/latest/72x72/") and text.endswith(".png") and (" " not in text)
+        if (not text.endswith(".png")) or (" " in text):
+            return False
         
-        return (text.startswith("https://twemoji.maxcdn.com/v/latest/72x72/") or text.startswith("https://cdn.discordapp.com/emojis/")) and text.endswith(".png") and text.count(" ")
+        if not self.parse_discord_emoji:
+            return text.startswith("https://twemoji.maxcdn.com/v/latest/72x72/")
+        
+        return text.startswith("https://twemoji.maxcdn.com/v/latest/72x72/") or text.startswith("https://cdn.discordapp.com/emojis/")
 
 
     def __init__(self, image, parse_discord_emoji: bool = False, session: ClientSession = None, *args, **kwargs) -> None:
@@ -54,19 +57,25 @@ class TwemojiParser:
         
         if isinstance(image, bytes):
             self.image = Image.open(BytesIO(image))
-        elif isinstance(image, BytesIO):
-            self.image = Image.open(image)
-        elif isinstance(image, str) and isfile(image):
+        elif isinstance(image, BytesIO) or (isinstance(image, str) and isfile(image)):
             self.image = Image.open(image)
         else:
             self.image = image
         
-        self.draw = ImageDraw.Draw(image)
+        self.draw = ImageDraw.Draw(self.image)
         self._emoji_cache = {}
         self._image_cache = {}
-        self.__session = session if session else ClientSession()
-        self.parse_discord_emoji = parse_discord_emoji
+        self._discord_emoji_cache = []
+        self.__session = session or ClientSession()
+        self.parse_discord_emoji = bool(parse_discord_emoji)
+        self.emoji_size = kwargs.get('emoji_size')
 
+
+    def __repr__(self):
+        try:
+            return f"<TwemojiParser parse_discord_emoji={self.parse_discord_emoji} image={self.image!r}>"
+        except AttributeError:
+            return "<TwemojiParser (closed)>"
     
     async def getsize(self, text: str, font, check_for_url: bool = True, spacing: int = 4, *args, **kwargs) -> tuple:
         """ Gets the size of a text. """
@@ -74,7 +83,7 @@ class TwemojiParser:
         _parsed = await self.__parse_text(text, check_for_url)
         
         if self.parse_discord_emoji:
-            _parsed = await parse_custom_emoji(text, self.__session)
+            _parsed = await parse_custom_emoji(text, self)
         
         _width, _height = 0, font.getsize(text)[1]
         _, _font_descent = font.getmetrics()
@@ -127,6 +136,7 @@ class TwemojiParser:
         text: str,
         font=None,
         spacing: int = 4,
+        emoji_size: int = None,
         
         # Parser options
         with_url_check: bool = True,
@@ -146,27 +156,29 @@ class TwemojiParser:
         _current_x, _current_y = xy[0], xy[1]
         _origin_x = xy[0]
         if self.parse_discord_emoji:
-            _parsed_text = await parse_custom_emoji(_parsed_text, self.__session)
+            _parsed_text = await parse_custom_emoji(_parsed_text, self)
 
         if not [i for i in _parsed_text if self.__is_emoji_url(i)]:
             self.draw.text(xy, text, font=font, spacing=spacing, *args, **kwargs)
         else:
             for word in _parsed_text:
                 if self.__is_emoji_url(word):
+                    _emoji_size = emoji_size or self.emoji_size or (_font_size + _font_descent)
+                
                     # check if image is in cache
                     if word in self._image_cache:
                         _emoji_im = self._image_cache[word].copy()
                     else:
                         _emoji_im = await self.__image_from_url(word)
-                        _emoji_im = _emoji_im.resize((_font_size+_font_descent, _font_size+_font_descent)).convert("RGBA")
+                        _emoji_im = _emoji_im.resize((_emoji_size, _emoji_size)).convert("RGBA")
                         self._image_cache[word] = _emoji_im.copy()
 
                     self.image.paste(_emoji_im, (_current_x, _current_y), _emoji_im)                    
-                    _current_x += _font_size + _font_descent + spacing
+                    _current_x += _emoji_size + spacing
                     continue
 
                 _size = _font.getsize(word.replace("\n", ""))
-                if word.count("\n") > 0:
+                if "\n" in word:
                     _current_x = _origin_x - spacing
                     _current_y += (_font_size * word.count("\n"))
                 self.draw.text((_current_x, _current_y), word, font=font, *args, **kwargs)
@@ -175,6 +187,7 @@ class TwemojiParser:
         if clear_cache_after_usage:
             self._emoji_cache = {}
             self._image_cache = {}
+            self._discord_emoji_cache = []
             gc.collect()
             
     async def close(self, delete_all_attributes: bool = True, close_session: bool = True):
@@ -189,5 +202,6 @@ class TwemojiParser:
             del self.draw
             del self.image
             del self.parse_discord_emoji
+            del self._discord_emoji_cache
 
             gc.collect() # if the cache is large it is better to explicitly call this
